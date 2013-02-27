@@ -2,6 +2,9 @@
 bin/
 bin-debug/
 bin-release/
+*~
+*.o
+quash
 
 # Other files and folders
 .settings/
