@@ -32,6 +32,7 @@ char line[BUFFER_LENGTH];
 // the holder for search paths
 char search[MAX_PATHS][MAX_PATH_LEN];
 int path_len = 0;
+char **env;
 
 
 
@@ -40,7 +41,7 @@ char* accept(void) {
 	return line;
 }
 
-void execute(char **argv) {
+void execute(char **argv, int background) {
     pid_t  pid;
     int    status;
     if ((pid = fork()) < 0) {
@@ -48,23 +49,28 @@ void execute(char **argv) {
          exit(1);
     }
     else if (pid == 0) {
-        if (execvp(*argv, argv) < 0) {
-            printf("*** ERROR: exec failed\n");
+    	errno = 0;
+        if (execvpe(*argv, argv, env) < 0) {
+            printf("%s\n", strerror(errno));
             exit(1);
         }
     }
     else {
-        while (wait(&status) != pid)
-            ;
+    	if (background == FALSE)
+	        while (wait(&status) != pid)
+    	        ;
+    	else
+    		printf("[1] %i\n", pid);
     }
 }
 
 
-int main(void) {
+int main(int argc, char **argv, char **envp) {
 
 	register struct passwd *pw;
 	register uid_t uid;
 	char *user;
+	env = envp;
 
 	char *buffer;
 	uid = geteuid();
@@ -80,31 +86,36 @@ int main(void) {
 	
 	// retrieve our path and put it into an array of search paths
 	// not really needed if we're using execvp... oops
-	char* path;
+	/*char* path;
 	path = getenv("PATH");
 	char* pch = strtok(path, ":");
-        while (pch != NULL) {
-            strcpy(search[path_len], pch);
-            pch = strtok(NULL, ":");
-            path_len++;
-        }
-
+    while (pch != NULL) {
+        strcpy(search[path_len], pch);
+        pch = strtok(NULL, ":");
+        path_len++;
+    }*/
 	while (TRUE) {
         printf("%s@%s$ ", pw->pw_name, hostname);
         fflush(stdout);
        	buffer = accept();
-               	
 		// make our argv and argc
-		char argv[MAX_ARGV][MAX_ARG_LEN];
+		char** argv = (char**)malloc(sizeof(char*) * MAX_ARGV);
         int argc = 0;
         char* pch = strtok(buffer, " \n");
         while (pch != NULL) {
-            strcpy(argv[argc], pch);
+            argv[argc] = pch;
             pch = strtok(NULL, " \n");
             argc++;
         }
+        // Run detection for background operation
+        int background;
+        if (strcmp(argv[argc-1], "&") == 0) {
+        	background = TRUE;
+        	argv[argc-1][0] = '\0';
+        } else
+        	background = FALSE;
         // now try and execute our command
-        execute(argv);
+        execute(argv, background);
 	}
 	return EXIT_SUCCESS;
 }
