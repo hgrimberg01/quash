@@ -98,7 +98,13 @@ int main(int argc, char **argv, char **envp) {
         printf("%s@%s$ ", pw->pw_name, hostname);
         fflush(stdout);
        	buffer = accept();
+
+       	//Handle exit command
+       	if(strncmp(buffer,"exit",4) == 0 || strncmp(buffer,"quit",4) == 0 ){
+       		return EXIT_SUCCESS;
+       	}
 		// make our argv and argc
+
 		char** argv = (char**)malloc(sizeof(char*) * MAX_ARGV);
         int argc = 0;
         char* pch = strtok(buffer, " \n");
