@@ -34,7 +34,37 @@ char search[MAX_PATHS][MAX_PATH_LEN];
 int path_len = 0;
 char **env;
 
+void change_dir(char *pch) {
+	int err_stat = 0;
+	if (strncmp(pch, "cd", 2) == 0 || strncmp(pch, "chdir", 5) == 0) {
+		pch = strtok(NULL, " \n");
+		if (pch == NULL || strncmp(pch, "~", 2) == 0) {
+			if(pch != NULL){strncmp(pch, "~", 2);}
+			errno = 0;
+			err_stat = chdir(getenv("HOME"));
+			if (err_stat < 0) {
+				printf("%s\n", strerror(errno));
+			}
+		} else if (strncmp(pch, "/", 1) == 0) {
+			//Handle Absolute Path
+			errno = 0;
+			err_stat = chdir(pch);
 
+			if (err_stat < 0) {
+				printf("%s\n", strerror(errno));
+			}
+		} else {
+			errno = 0;
+			err_stat = chdir(strcat(getcwd(0, 0), pch));
+			if (err_stat < 0) {
+				printf("%s\n", strerror(errno));
+			}
+
+		}
+
+	}
+	return;
+}
 
 char* accept(void) {
 	read(0, line, BUFFER_LENGTH);
@@ -42,28 +72,25 @@ char* accept(void) {
 }
 
 void execute(char **argv, int background) {
-    pid_t  pid;
-    int    status;
-    if ((pid = fork()) < 0) {
-         printf("*** ERROR: forking child process failed\n");
-         exit(1);
-    }
-    else if (pid == 0) {
-    	errno = 0;
-        if (execvpe(*argv, argv, env) < 0) {
-            printf("%s\n", strerror(errno));
-            exit(1);
-        }
-    }
-    else {
-    	if (background == FALSE)
-	        while (wait(&status) != pid)
-    	        ;
-    	else
-    		printf("[1] %i\n", pid);
-    }
+	pid_t pid;
+	int status;
+	if ((pid = fork()) < 0) {
+		printf("*** ERROR: forking child process failed\n");
+		exit(1);
+	} else if (pid == 0) {
+		errno = 0;
+		if (execvpe(*argv, argv, env) < 0) {
+			printf("%s\n", strerror(errno));
+			exit(1);
+		}
+	} else {
+		if (background == FALSE)
+			while (wait(&status) != pid)
+				;
+		else
+			printf("[1] %i\n", pid);
+	}
 }
-
 
 int main(int argc, char **argv, char **envp) {
 
@@ -71,6 +98,8 @@ int main(int argc, char **argv, char **envp) {
 	register uid_t uid;
 	char *user;
 	env = envp;
+	int background;
+	int err_stat;
 
 	char *buffer;
 	uid = geteuid();
@@ -79,43 +108,53 @@ int main(int argc, char **argv, char **envp) {
 		user = pw->pw_name;
 	}
 
-        // get the host name and put it in a buffer
+	// get the host name and put it in a buffer
 	char hostname[64];
 	hostname[0] = '\0';
 	gethostname(hostname, sizeof(hostname));
-	
+
 	// retrieve our path and put it into an array of search paths
 	// not really needed if we're using execvp... oops
 	/*char* path;
-	path = getenv("PATH");
-	char* pch = strtok(path, ":");
-    while (pch != NULL) {
-        strcpy(search[path_len], pch);
-        pch = strtok(NULL, ":");
-        path_len++;
-    }*/
+	 path = getenv("PATH");
+	 char* pch = strtok(path, ":");
+	 while (pch != NULL) {
+	 strcpy(search[path_len], pch);
+	 pch = strtok(NULL, ":");
+	 path_len++;
+	 }*/
 	while (TRUE) {
-        printf("%s@%s$ ", pw->pw_name, hostname);
-        fflush(stdout);
-       	buffer = accept();
+		printf("%s@%s$ ", pw->pw_name, hostname);
+		fflush(stdout);
+		buffer = accept();
+
+		//Handle exit command
+		if (strncmp(buffer, "exit", 4) == 0
+				|| strncmp(buffer, "quit", 4) == 0) {
+			return EXIT_SUCCESS;
+		}
 		// make our argv and argc
-		char** argv = (char**)malloc(sizeof(char*) * MAX_ARGV);
-        int argc = 0;
-        char* pch = strtok(buffer, " \n");
-        while (pch != NULL) {
-            argv[argc] = pch;
-            pch = strtok(NULL, " \n");
-            argc++;
-        }
-        // Run detection for background operation
-        int background;
-        if (strcmp(argv[argc-1], "&") == 0) {
-        	background = TRUE;
-        	argv[argc-1][0] = '\0';
-        } else
-        	background = FALSE;
-        // now try and execute our command
-        execute(argv, background);
+
+		char** argv = (char**) malloc(sizeof(char*) * MAX_ARGV);
+		int argc = 0;
+		char* pch = strtok(buffer, " \n");
+		while (pch != NULL ) {
+			argv[argc] = pch;
+
+			change_dir(pch);
+
+			pch = strtok(NULL, " \n");
+			argc++;
+		}
+		// Run detection for background operation
+
+		if (strcmp(argv[argc - 1], "&") == 0) {
+			background = TRUE;
+			argv[argc - 1][0] = '\0';
+		} else
+			background = FALSE;
+		// now try and execute our command
+		execute(argv, background);
 	}
 	return EXIT_SUCCESS;
 }
