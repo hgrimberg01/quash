@@ -34,36 +34,56 @@ char search[MAX_PATHS][MAX_PATH_LEN];
 int path_len = 0;
 char **env;
 
-void change_dir(char *pch) {
+int change_dir(char *pch) {
 	int err_stat = 0;
+
 	if (strncmp(pch, "cd", 2) == 0 || strncmp(pch, "chdir", 5) == 0) {
 		pch = strtok(NULL, " \n");
-		if (pch == NULL || strncmp(pch, "~", 2) == 0) {
-			if(pch != NULL){strncmp(pch, "~", 2);}
+		if (pch == NULL ) {
+
 			errno = 0;
+
 			err_stat = chdir(getenv("HOME"));
 			if (err_stat < 0) {
+
 				printf("%s\n", strerror(errno));
+				return FALSE;
+
+			} else {
+
+				return TRUE;
 			}
 		} else if (strncmp(pch, "/", 1) == 0) {
 			//Handle Absolute Path
 			errno = 0;
+
 			err_stat = chdir(pch);
 
 			if (err_stat < 0) {
 				printf("%s\n", strerror(errno));
+				return FALSE;
+			} else {
+				return TRUE;
 			}
 		} else {
 			errno = 0;
-			err_stat = chdir(strcat(getcwd(0, 0), pch));
+
+			char dirbuf[MAX_PATH_LEN];
+			getcwd(dirbuf, sizeof(dirbuf));
+			strcat(dirbuf, "/");
+			strcat(dirbuf, pch);
+			err_stat = chdir(dirbuf);
 			if (err_stat < 0) {
 				printf("%s\n", strerror(errno));
+				return FALSE;
+			} else {
+				return TRUE;
 			}
 
 		}
 
 	}
-	return;
+	return FALSE;
 }
 
 char* accept(void) {
@@ -99,6 +119,7 @@ int main(int argc, char **argv, char **envp) {
 	char *user;
 	env = envp;
 	int background;
+	int builtin;
 	int err_stat;
 
 	char *buffer;
@@ -126,6 +147,7 @@ int main(int argc, char **argv, char **envp) {
 	while (TRUE) {
 		printf("%s@%s$ ", pw->pw_name, hostname);
 		fflush(stdout);
+		buffer = NULL;
 		buffer = accept();
 
 		//Handle exit command
@@ -133,28 +155,36 @@ int main(int argc, char **argv, char **envp) {
 				|| strncmp(buffer, "quit", 4) == 0) {
 			return EXIT_SUCCESS;
 		}
+		builtin = FALSE;
 		// make our argv and argc
 
 		char** argv = (char**) malloc(sizeof(char*) * MAX_ARGV);
 		int argc = 0;
+
 		char* pch = strtok(buffer, " \n");
 		while (pch != NULL ) {
-			argv[argc] = pch;
+			if (change_dir(buffer) == TRUE) {
+				builtin = TRUE;
+				break;
+			}
 
-			change_dir(pch);
+			argv[argc] = pch;
 
 			pch = strtok(NULL, " \n");
 			argc++;
 		}
 		// Run detection for background operation
+		if (builtin == FALSE) {
+			if (strcmp(argv[argc - 1], "&") == 0) {
+				background = TRUE;
+				argv[argc - 1][0] = '\0';
+			} else
+				background = FALSE;
+			// now try and execute our command
+			execute(argv, background);
+		}
 
-		if (strcmp(argv[argc - 1], "&") == 0) {
-			background = TRUE;
-			argv[argc - 1][0] = '\0';
-		} else
-			background = FALSE;
-		// now try and execute our command
-		execute(argv, background);
+		memset(buffer, 0, sizeof(buffer));
 	}
 	return EXIT_SUCCESS;
 }
