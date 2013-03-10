@@ -26,16 +26,11 @@
 #define MAX_ARGV 12
 #define MAX_ARG_LEN 128
 
-// the line they enter
-char line[BUFFER_LENGTH];
-
-// the holder for search paths
-char search[MAX_PATHS][MAX_PATH_LEN];
-int path_len = 0;
-char **env;
-
-int change_dir(char *pch) {
+int change_dir(char *buffer) {
 	int err_stat = 0;
+	char safe_buffer[2048];
+	strcpy(safe_buffer, buffer);
+	char* pch = strtok(safe_buffer, " \n");
 
 	if (strncmp(pch, "cd", 2) == 0 || strncmp(pch, "chdir", 5) == 0) {
 		pch = strtok(NULL, " \n");
@@ -86,20 +81,24 @@ int change_dir(char *pch) {
 	return FALSE;
 }
 
-char* accept(void) {
+char* accept(char* line) {
+
 	read(0, line, BUFFER_LENGTH);
 	return line;
 }
 
-void execute(char **argv, int background) {
+void execute(char ***argv, int background, char **env) {
 	pid_t pid;
+
 	int status;
+
 	if ((pid = fork()) < 0) {
 		printf("*** ERROR: forking child process failed\n");
 		exit(1);
 	} else if (pid == 0) {
 		errno = 0;
-		if (execvpe(*argv, argv, env) < 0) {
+
+		if (execvpe(**argv, *argv, env) < 0) {
 			printf("%s\n", strerror(errno));
 			exit(1);
 		}
@@ -110,32 +109,173 @@ void execute(char **argv, int background) {
 		else
 			printf("[1] %i\n", pid);
 	}
+
+	return;
+}
+
+void execute_piped(char ***argv1, int background1, char **env1, char ***argv2,
+		int background2, char **env2) {
+	pid_t pid, pid2;
+	int status, status2;
+	int plumbing[2];
+
+	pipe(plumbing);
+
+	if ((pid = fork()) < 0) {
+		printf("*** ERROR: forking child process failed\n");
+		exit(1);
+	} else if (pid == 0) {
+		errno = 0;
+		close(plumbing[0]);
+		dup2(plumbing[1], STDOUT_FILENO);
+
+		if (execvpe(**argv1, *argv1, env1) < 0) {
+			printf("%s\n", strerror(errno));
+			exit(1);
+		}
+	} else {
+		if (background1 == FALSE) {
+
+		}
+
+		else {
+			printf("[1] %i\n", pid);
+		}
+	}
+
+
+	if ((pid2 = fork()) < 0) {
+		printf("*** ERROR: forking child process 2 failed\n");
+		exit(1);
+	} else if (pid2 == 0) {
+		errno = 0;
+
+
+		close(plumbing[1]);
+		dup2(plumbing[0], STDIN_FILENO);
+		if (execvpe(**argv2, *argv2, env2) < 0) {
+			printf("%s\n", strerror(errno));
+			exit(1);
+		}
+
+	} else {
+		if (background2 == FALSE) {
+
+		}
+
+		else {
+			printf("[1] %i\n", pid);
+		}
+	}
+	close(plumbing[1]);
+	close(plumbing[0]);
+
+	while (waitpid(pid2, &status, 0) != pid2) {
+	};
+	return;
+}
+
+typedef enum {
+	REG, PIPE, REDIR_IN, REDIR_OUT
+} cmd_type;
+
+typedef struct {
+	char** argv;
+	int argc;
+	char **envv;
+	cmd_type com_type;
+	int is_background;
+	char target[MAX_PATH_LEN];
+} Command;
+
+Command* build_regular_command(char* buffer, char **env) {
+	char safe_buffer[256];
+	char* pch;
+	char** argv = (char**) malloc(sizeof(char*) * MAX_ARGV);
+	char** argv2;
+	int argc = 0;
+	int background;
+	char* command_buffer;
+
+	Command* command;
+
+	command = (Command*) malloc(sizeof(Command));
+
+	strcpy(safe_buffer, buffer);
+	pch = strtok(safe_buffer, " \n");
+	while (pch != NULL ) {
+		command_buffer = (char*) malloc((strlen(pch) * sizeof(char)) + 1);
+		memset(command_buffer, '\0', (strlen(pch) * sizeof(char)) + 1);
+		strcpy(command_buffer, pch);
+		argv[argc] = command_buffer;
+		command_buffer = NULL;
+
+		pch = strtok(NULL, " \n");
+		argc++;
+	}
+
+// Run detection for background operation
+	if (argc != 0) {
+		if (strcmp(argv[argc - 1], "&") == 0) {
+			background = TRUE;
+			argv[argc - 1][0] = '\0';
+		} else {
+			background = FALSE;
+		}
+	}
+	argv2 = (char**) malloc(sizeof(char*) * (argc + 1));
+	int i = 0;
+	for (i = argc; i < MAX_ARGV - 1; i++) {
+
+		argv[argc] = '\0';
+	}
+
+	command->argc = argc;
+	command->is_background = background;
+	command->argv = argv;
+	command->com_type = REG;
+	command->envv = env;
+
+	return command;
 }
 
 int main(int argc, char **argv, char **envp) {
+// the line they enter
+	char line[BUFFER_LENGTH];
+
+// the holder for search paths
+	char search[MAX_PATHS][MAX_PATH_LEN];
+	int path_len = 0;
 
 	register struct passwd *pw;
 	register uid_t uid;
-	char *user;
+	char **env;
 	env = envp;
-	int background;
-	int builtin;
-	int err_stat;
 
+	int dirchange;
+
+	char* pipeptr;
+	char* inptr;
+	char* outptr;
+	char* user;
+	Command* basic;
+	Command* firstC;
+	Command* SecondC;
 	char *buffer;
+
 	uid = geteuid();
 	pw = getpwuid(uid);
 	if (pw) {
 		user = pw->pw_name;
 	}
 
-	// get the host name and put it in a buffer
+// get the host name and put it in a buffer
 	char hostname[64];
 	hostname[0] = '\0';
 	gethostname(hostname, sizeof(hostname));
 
-	// retrieve our path and put it into an array of search paths
-	// not really needed if we're using execvp... oops
+// retrieve our path and put it into an array of search paths
+// not really needed if we're using execvp... oops
 	/*char* path;
 	 path = getenv("PATH");
 	 char* pch = strtok(path, ":");
@@ -144,47 +284,73 @@ int main(int argc, char **argv, char **envp) {
 	 pch = strtok(NULL, ":");
 	 path_len++;
 	 }*/
+	dirchange = -1;
 	while (TRUE) {
 		printf("%s@%s$ ", pw->pw_name, hostname);
 		fflush(stdout);
-		buffer = NULL;
-		buffer = accept();
+
+		memset(line, '\0', sizeof(line));
+
+		buffer = accept(line);
+
+		pipeptr = strpbrk(buffer, "|");
+		inptr = strpbrk(buffer, "<");
+		outptr = strpbrk(buffer, ">");
 
 		//Handle exit command
 		if (strncmp(buffer, "exit", 4) == 0
 				|| strncmp(buffer, "quit", 4) == 0) {
 			return EXIT_SUCCESS;
 		}
-		builtin = FALSE;
-		// make our argv and argc
 
-		char** argv = (char**) malloc(sizeof(char*) * MAX_ARGV);
-		int argc = 0;
+		if (strncmp(buffer, "cd", 2) == 0) {
+			change_dir(buffer);
+		} else {
 
-		char* pch = strtok(buffer, " \n");
-		while (pch != NULL ) {
-			if (change_dir(buffer) == TRUE) {
-				builtin = TRUE;
-				break;
+			if (inptr != NULL ) {
+				//If we redirect in, nothing else can happen
+			} else {
+				if (pipeptr != NULL && outptr != NULL ) {
+					//Line has pipe and redirect out
+				} else if (pipeptr != NULL && outptr == NULL ) {
+					//Just a pipe
+
+					char* pch = strtok(buffer, "|\n");
+					char first[256];
+					strcpy(first, pch);
+					char second[256];
+					pch = strtok(NULL, "|\n");
+					strcpy(second, pch);
+					firstC = build_regular_command(first, env);
+
+					SecondC = build_regular_command(second, env);
+
+					execute_piped(&(firstC->argv), firstC->is_background,
+							firstC->envv, &(SecondC->argv),
+							SecondC->is_background, SecondC->envv);
+					free(firstC);
+					free(SecondC);
+					firstC = NULL;
+					SecondC = NULL;
+					memset(buffer, '\0', sizeof(buffer));
+
+				} else if (pipeptr == NULL && outptr != NULL ) {
+					//Just an outbound redirect
+				} else if (pipeptr == NULL && outptr == NULL ) {
+					basic = build_regular_command(buffer, env);
+
+					execute(&(basic->argv), basic->is_background, basic->envv);
+					memset(basic, 0, sizeof(*basic));
+					free(basic);
+					basic = NULL;
+
+				}
 			}
-
-			argv[argc] = pch;
-
-			pch = strtok(NULL, " \n");
-			argc++;
-		}
-		// Run detection for background operation
-		if (builtin == FALSE) {
-			if (strcmp(argv[argc - 1], "&") == 0) {
-				background = TRUE;
-				argv[argc - 1][0] = '\0';
-			} else
-				background = FALSE;
-			// now try and execute our command
-			execute(argv, background);
 		}
 
-		memset(buffer, 0, sizeof(buffer));
+		memset(buffer, '\0', sizeof(buffer));
+		memset(line, '\0', sizeof(line));
+
 	}
 	return EXIT_SUCCESS;
 }
