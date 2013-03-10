@@ -113,6 +113,66 @@ void execute(char ***argv, int background, char **env) {
 	return;
 }
 
+void execute_redirect_out(char ***argv, int background, char **env, char* path) {
+
+	pid_t pid;
+
+	int status;
+
+	if ((pid = fork()) < 0) {
+		printf("*** ERROR: forking child process failed\n");
+		exit(1);
+	} else if (pid == 0) {
+		errno = 0;
+		FILE *fp;
+		fp = fopen(path, "w");
+		dup2(fileno(fp), STDOUT_FILENO);
+		fclose(fp);
+		if (execvpe(**argv, *argv, env) < 0) {
+			printf("%s\n", strerror(errno));
+			exit(1);
+		}
+	} else {
+		if (background == FALSE)
+			while (wait(&status) != pid)
+				;
+		else
+			printf("[1] %i\n", pid);
+	}
+
+	return;
+}
+
+void execute_redirect_in(char ***argv, int background, char **env, char* path) {
+
+	pid_t pid;
+
+	int status;
+
+	if ((pid = fork()) < 0) {
+		printf("*** ERROR: forking child process failed\n");
+		exit(1);
+	} else if (pid == 0) {
+		errno = 0;
+		FILE *fp;
+		fp = fopen(path, "r");
+		dup2(fileno(fp), STDIN_FILENO);
+		fclose(fp);
+		if (execvpe(**argv, *argv, env) < 0) {
+			printf("%s\n", strerror(errno));
+			exit(1);
+		}
+	} else {
+		if (background == FALSE)
+			while (wait(&status) != pid)
+				;
+		else
+			printf("[1] %i\n", pid);
+	}
+
+	return;
+}
+
 void execute_piped(char ***argv1, int background1, char **env1, char ***argv2,
 		int background2, char **env2) {
 	pid_t pid, pid2;
@@ -143,13 +203,11 @@ void execute_piped(char ***argv1, int background1, char **env1, char ***argv2,
 		}
 	}
 
-
 	if ((pid2 = fork()) < 0) {
 		printf("*** ERROR: forking child process 2 failed\n");
 		exit(1);
 	} else if (pid2 == 0) {
 		errno = 0;
-
 
 		close(plumbing[1]);
 		dup2(plumbing[0], STDIN_FILENO);
@@ -308,7 +366,22 @@ int main(int argc, char **argv, char **envp) {
 		} else {
 
 			if (inptr != NULL ) {
-				//If we redirect in, nothing else can happen
+				char* pch = strtok(buffer, "<\n");
+				char first[256];
+				strcpy(first, pch);
+				char second[256];
+				pch = strtok(NULL, "<\n");
+				strcpy(second, pch);
+
+				basic = build_regular_command(first, env);
+				execute_redirect_in(&(basic->argv), basic->is_background,
+						basic->envv, second);
+
+				memset(first, '\0', sizeof(char) * 256);
+				memset(second, '\0', sizeof(char) * 256);
+				memset(buffer, '\0', sizeof(buffer));
+				free(basic);
+				basic = NULL;
 			} else {
 				if (pipeptr != NULL && outptr != NULL ) {
 					//Line has pipe and redirect out
@@ -332,15 +405,36 @@ int main(int argc, char **argv, char **envp) {
 					free(SecondC);
 					firstC = NULL;
 					SecondC = NULL;
+					memset(first, '\0', sizeof(char) * 256);
+					memset(second, '\0', sizeof(char) * 256);
 					memset(buffer, '\0', sizeof(buffer));
 
 				} else if (pipeptr == NULL && outptr != NULL ) {
+
+					char* pch = strtok(buffer, ">\n");
+					char first[256];
+					strcpy(first, pch);
+					char second[256];
+					pch = strtok(NULL, ">\n");
+					strcpy(second, pch);
+
+					basic = build_regular_command(first, env);
+					execute_redirect_out(&(basic->argv), basic->is_background,
+							basic->envv, second);
+
+					memset(first, '\0', sizeof(char) * 256);
+					memset(second, '\0', sizeof(char) * 256);
+					memset(buffer, '\0', sizeof(buffer));
+					free(basic);
+					basic = NULL;
+
 					//Just an outbound redirect
 				} else if (pipeptr == NULL && outptr == NULL ) {
 					basic = build_regular_command(buffer, env);
 
 					execute(&(basic->argv), basic->is_background, basic->envv);
 					memset(basic, 0, sizeof(*basic));
+					memset(buffer, '\0', sizeof(buffer));
 					free(basic);
 					basic = NULL;
 
