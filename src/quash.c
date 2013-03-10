@@ -233,6 +233,70 @@ void execute_piped(char ***argv1, int background1, char **env1, char ***argv2,
 	return;
 }
 
+void execute_piped_out_redir(char ***argv1, int background1, char **env1,
+		char ***argv2, int background2, char **env2, char* path) {
+	pid_t pid, pid2;
+	int status, status2;
+	int plumbing[2];
+
+	pipe(plumbing);
+
+	if ((pid = fork()) < 0) {
+		printf("*** ERROR: forking child process failed\n");
+		exit(1);
+	} else if (pid == 0) {
+		errno = 0;
+		close(plumbing[0]);
+		dup2(plumbing[1], STDOUT_FILENO);
+
+		if (execvpe(**argv1, *argv1, env1) < 0) {
+			printf("%s\n", strerror(errno));
+			exit(1);
+		}
+	} else {
+		if (background1 == FALSE) {
+
+		}
+
+		else {
+			printf("[1] %i\n", pid);
+		}
+	}
+
+	if ((pid2 = fork()) < 0) {
+		printf("*** ERROR: forking child process 2 failed\n");
+		exit(1);
+	} else if (pid2 == 0) {
+		errno = 0;
+
+		close(plumbing[1]);
+		dup2(plumbing[0], STDIN_FILENO);
+		FILE *fp;
+		fp = fopen(path, "w");
+		dup2(fileno(fp), STDOUT_FILENO);
+		fclose(fp);
+		if (execvpe(**argv2, *argv2, env2) < 0) {
+			printf("%s\n", strerror(errno));
+			exit(1);
+		}
+
+	} else {
+		if (background2 == FALSE) {
+
+		}
+
+		else {
+			printf("[1] %i\n", pid);
+		}
+	}
+	close(plumbing[1]);
+	close(plumbing[0]);
+
+	while (waitpid(pid2, &status, 0) != pid2) {
+	};
+	return;
+}
+
 typedef enum {
 	REG, PIPE, REDIR_IN, REDIR_OUT
 } cmd_type;
@@ -384,7 +448,37 @@ int main(int argc, char **argv, char **envp) {
 				basic = NULL;
 			} else {
 				if (pipeptr != NULL && outptr != NULL ) {
-					//Line has pipe and redirect out
+					char* pch = strtok(buffer, "|\n");
+					char first[256];
+					strcpy(first, pch);
+					char second[256];
+					pch = strtok(NULL, "|\n");
+					strcpy(second, pch);
+
+					char third[256];
+					pch = strtok(second, ">\n");
+					strcpy(third, pch);
+					char fourth[256];
+					pch = strtok(NULL, ">\n");
+					strcpy(fourth, pch);
+
+					firstC = build_regular_command(first, env);
+
+					SecondC = build_regular_command(third, env);
+
+					execute_piped_out_redir(&(firstC->argv),
+							firstC->is_background, firstC->envv,
+							&(SecondC->argv), SecondC->is_background,
+							SecondC->envv, fourth);
+					free(firstC);
+					free(SecondC);
+					firstC = NULL;
+					SecondC = NULL;
+					memset(first, '\0', sizeof(char) * 256);
+					memset(second, '\0', sizeof(char) * 256);
+					memset(third, '\0', sizeof(char) * 256);
+					memset(fourth, '\0', sizeof(char) * 256);
+					memset(buffer, '\0', sizeof(buffer));
 				} else if (pipeptr != NULL && outptr == NULL ) {
 					//Just a pipe
 
