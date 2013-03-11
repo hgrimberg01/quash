@@ -1,0 +1,22 @@
+CC=gcc
+CCFLAGS=-I.
+LIBS=
+
+all: quash
+
+quash.o: src/quash.c
+	$(CC) -g $(CCFLAGS) -c $@ 
+
+utility.o: src/utility.c
+	$(CC) -g $(CCFLAGS) -c $@
+	
+quash: src/quash.o src/utility.o
+	$(CC) -o $@ $^ -g $(CCFLAGS) $(LIBS)
+	
+test: quash
+	./quash
+	
+clean:
+	find . -name "*.o" | xargs rm
+	find . -name "*~" | xargs rm
+	rm quash

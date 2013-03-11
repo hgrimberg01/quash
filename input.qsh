@@ -1,0 +1,4 @@
+set HOME=/root/
+set PATH=/usr/bin:/usr/local/bin:/bin
+ls
+ls -l
