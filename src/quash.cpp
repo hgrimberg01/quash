@@ -19,8 +19,6 @@ using namespace boost;
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -44,10 +42,8 @@ class CmdPart {
     string input_filename = "";
     string output_filename = "";
     bool is_background = false;
-    friend ostream& operator<<(ostream& os, const CmdPart& dt) {
-        os << "Command: " << dt.argv[0] << "\nfout: " << dt.output_filename << "\nfin: " << dt.input_filename << "\nbg: " << dt.is_background << endl;
-        return os;
-    }
+    // a vector of all pids associated with cmd
+    vector<int> pids;
 };
 
 // holds information on individual jobs
@@ -58,16 +54,19 @@ class JobObj {
     int count;
 };
 
+// emviroment to pass to execed functions
 extern char **environ;
+// the current number of jobs and vector holding the jobs
 int job_count;
 vector<JobObj*> jobs;
 
-//Basic execute function. Ripped straigh from the old source
+// Basic execute function, doesn't exec things in cwd
 void execute(char **argv) {
     if (execvpe(argv[0], argv, environ) < 0)
         cerr << "ERROR: failed to exec method " << strerror(errno) << endl;
 }
 
+// interrupt function for terminating child
 void sigchld_int(int signal) {
     pid_t pid;
     // loop waiting for complete death of process
@@ -77,6 +76,7 @@ void sigchld_int(int signal) {
             if (jobs[i]->pid == pid) {
                 cout << endl << "[" << jobs[i]->count << "] " << jobs[i]->pid << " completed " << jobs[i]->command << endl;
                 jobs.erase(jobs.begin() + i);
+                job_count--;
                 break;
             }
         }
@@ -100,8 +100,8 @@ void setup_job_listener() {
     }
 }
 
-//Change Dir Function
-//Accepts a string and changes dir.
+// Change Dir Function
+// Accepts a string that is the entire command
 int change_dir(char *buffer) {
 	int err_stat = 0;
 	char safe_buffer[2048];
@@ -157,13 +157,8 @@ int change_dir(char *buffer) {
 	return FALSE;
 }
 
-char* accept(char* line) {
-	read(0, line, BUFFER_LENGTH);
-	return line;
-}
-
-//Given a string of a single command with arguments and an enviroment,
-//returns a pointer to a Command that has been mallocaed
+// Given a string of a single command and whether it is background exec
+// returns a pointer to a CmdPart object with specifics of how it executes
 CmdPart* build_command(string buffer, bool background) {
 
     CmdPart* command = new CmdPart();
@@ -173,6 +168,7 @@ CmdPart* build_command(string buffer, bool background) {
     vector<string> chunks;
     split(chunks, buffer, is_any_of(" "));
     
+    // init our argv array. It's a little large, but doesn't hurt
     char** argv = new char*[chunks.size() + 1];
     // loop over our chunks and process io-redirection
     // not perfect, can produce undefined behaviour for poorly foormed input
@@ -199,11 +195,11 @@ CmdPart* build_command(string buffer, bool background) {
     command->argc = argc;
     command->is_background = background;
     
-    //cout << "Command: " << command->argv[0] << "\nfout: " << command->output_filename << "\nfin: " << command->input_filename << "\nbg: " << command->is_background << endl;
-    //Return the pointer to the malloced Command
+    // return info object
     return command;
 }
 
+// splits apart a string containing pipes
 vector<CmdPart*> parse_input(char* list) {
     vector<CmdPart*> parts;
     string s = string(list);
@@ -220,24 +216,18 @@ vector<CmdPart*> parse_input(char* list) {
     vector<string> commands;
     split(commands, s, is_any_of("|\n"));
     
+    // parse those parts into info chunks
     for(vector<string>::size_type i = 0; i < commands.size(); i++) {
         trim(commands[i]);
         // ignore empty results
-        CmdPart *temp;
-        if (commands[i].length() > 0) {
-            temp = build_command(commands[i], bg);
-            //cout << "Command: " << temp->argv[0] << "\nfout: " << temp->output_filename << "\nfin: " << temp->input_filename << "\nbg: " << temp->is_background << endl;
-            parts.push_back(temp);
-        }
+        if (commands[i].length() > 0)
+            parts.push_back(build_command(commands[i], bg));
     }
     
     return parts;
 }
 
 int main(int argc, char **argv, char **envp) {
-	// the line they enter
-	char line[BUFFER_LENGTH];
-
 	// the holder for search paths
 	char search[MAX_PATHS][MAX_PATH_LEN];
 	int path_len = 0;
@@ -247,14 +237,6 @@ int main(int argc, char **argv, char **envp) {
 
 	int dirchange;
     char* user;
-    
-    // populate our environ variable
-    /*environ = envp;
-    for (; *environ != 0; environ++)
-    {
-        char* thisEnv = *environ;
-        printf("%s\n", thisEnv);
-    }*/
     
     // start listening for children procs
     setup_job_listener();
@@ -275,11 +257,7 @@ int main(int argc, char **argv, char **envp) {
 		printf("%s@%s$ ", pw->pw_name, hostname);
 		fflush(stdout);
 		
-		//Make sure our line/buffer is indeed empty
-		memset(line, '\0', sizeof(line));
-		
-		//Set line to stuff from terminal
-		//Also set buffer to alias line
+		// Setup our input and c_str for legacy functionality
         string tmp;
 		getline(cin, tmp);
         char *buffer = new char [tmp.length()+1];
@@ -294,15 +272,21 @@ int main(int argc, char **argv, char **envp) {
         for (vector<string>::size_type i = 0; i != parts.size(); i++) {
             // search our list of builtins for our command
             if(std::find(builtin.begin(), builtin.end(), parts[i]->argv[0]) != builtin.end()) {
-                if( (string)parts[i]->argv[0] == "exit" || (string)parts[i]->argv[0] == "quit" )
-                    exit( 0 );
+            	// send a kill signal to all children processes
+            	if ((string)parts[i]->argv[0] == "kill")
+                    exit(0);
+                if ((string)parts[i]->argv[0] == "exit" || (string)parts[i]->argv[0] == "quit")
+                    exit(0);
+                // change directory
                 if ((string)parts[i]->argv[0] == "cd")
                     change_dir(buffer);
+                // list out the jobs
                 if ((string)parts[i]->argv[0] == "jobs") {
                     for (int i = 0; i < jobs.size(); i++) {
                         cout << endl << "[" << jobs[i]->count << "] " << jobs[i]->pid << " -> " << jobs[i]->command << endl;
                     }
                 }
+                // set some enviromental variables
                 if ((string)parts[i]->argv[0] == "set") {
                     // change home
                     if (strncmp(parts[i]->argv[1], "HOME=", 5) == 0) {
@@ -315,74 +299,73 @@ int main(int argc, char **argv, char **envp) {
                             cerr << "ERROR: could not set path." << endl;
                     }
                 }
-                //cout << getenv ("PATH") << endl;
-                //cout << get_current_dir_name() << endl;
                 found = true;
             }
         }
         
+        // don't do anythin else since builtins can't be piped or redirected...
         if (found)
-            continue; // don't do anythin else since builtins can't be piped or redirected...
+            continue;
         
         // holder for stdin and stdout
-        int stdin = dup(STDIN_FILENO);
-        int stdout = dup(STDOUT_FILENO);
+        int stdin1 = dup(STDIN_FILENO);
+        int stdout1 = dup(STDOUT_FILENO);
         
-        // Start with input from STDIN.
+        // the placeholder for chaining
         int inputfd = NULL;
         int fd[2];
         int pid;
         int spid;
         int status;
+        vector<int> pids;
         
-        // loop over our commands and execute properly
-        for(vector<string>::size_type i = 0; i != parts.size(); i++) {
-            // setup some convenience vars
+        // loop over our commands and execute in a pipe chain
+        for (vector<string>::size_type i = 0; i != parts.size(); i++) {
+            // setup some convenience vars for the edge conditions
             bool last = false;
             bool first = false;
             if (i == parts.size() - 1)
                 last = true;
             if (i == 0)
                 first = true;
-                
             
-            //cout << "Starting to execute " << parts[i]->argv[0] << endl;
-            
-            // Create the pipe.
-            if (!(last && first)) // if it's not the only one
+            // init our pipe file descriptors if it isn't the only command
+            if (!(last && first))
                 if (pipe(fd) < 0)
                     cerr << "ERROR: Failed to open pipe." << endl;
 
+			// fork off our new process
             pid = fork();
-            if(pid < 0) { // just in case
+            if (pid < 0) { // just in case
                 cerr << "ERROR: Failed to fork new process " << parts[i]->argv[0] << "." << endl;
             } else if(pid == 0) {
                 // CHILD
                 // we now want to hook up our pipes properly
                 
                 // handle connecting to the last commands stdout if needed
-                // input will always be stdin for first command
                 if (!first) {
-                    //cerr << "Notice: piping input from " << parts[i-1]->argv[0] << " to " << parts[i]->argv[0] << endl;
-                    // Rename STDIN for this child to inputfd, which should be
+                    // change stdin to last commands stdout which is set below
                     // the read end of the pipe of the last command.
                     dup2(inputfd, STDIN_FILENO);
                     close(inputfd);
                 }
                 
-                // load up stdout into our placeholder pipe to be passed to next unless last
+                // load up stdout into our placeholder pipe to be passed to
+                // next cmd, unless this is the last in which case we leave it
+                // in tact
                 if (!last) {
                     dup2(fd[1], STDOUT_FILENO);
                     close(fd[1]);
                 }
 
                 if (parts[i]->is_background == true) {
-                    // Put child in new process group.
+                    // change child process group to not be child of our shell
                     if (setpgid(0, 0) < 0)
                         cerr << "ERROR: Failed to set pgid." << endl;
                 }
 
                 // detect our setup for file redirection and overwrite piping
+                // these values were inited when we parsed the command
                 if (parts[i]->input_filename.length() > 0) {
                     FILE *f = fopen(parts[i]->input_filename.c_str(), "r");
                     if (f == NULL)
@@ -395,7 +378,6 @@ int main(int argc, char **argv, char **envp) {
                 }
                 
                 // detect our setup for file redirection and overwrite piping
-                //cout << "Command: " << parts[i]->argv[0] << "\nfout: " << parts[i]->output_filename << "\nfin: " << parts[i]->input_filename << "\nbg: " << parts[i]->is_background << endl;
                 if (parts[i]->output_filename.length() > 0) {
                     FILE *f = fopen(parts[i]->output_filename.c_str(), "w");
                     if (f == NULL)
@@ -411,15 +393,18 @@ int main(int argc, char **argv, char **envp) {
                 execute(parts[i]->argv);
                 exit(0);
             } else {
+                if (!parts[i]->is_background) {
+                    // wait if we're not a background process
+                    wait(&status);
+                    // sleep to help prevent stdout flush race condition
+                    usleep(4000);
+                // if in bacground we should save the pids for job info later
+                } else
+	                pids.push_back(pid);
+                
+            	// save the pid if it's the first in the chain
                 if (first)
                     spid = pid;
-                
-                // Save the pid of the first child for background job reporting.
-                if (!parts[i]->is_background) {
-                    // Parent waits for child to finish.
-                    wait(&status);
-                    usleep(4000);
-                }
             }
             
             if (!last) {
@@ -433,26 +418,23 @@ int main(int argc, char **argv, char **envp) {
                     job->command = buffer;
                     job->count = job_count++;
                     job->pid = spid;
+                    job->pids = pids;
                     jobs.push_back(job);
                     cout << "[" << job->count << "] " << job->pid << endl;
                 }
             }
         }
 
-
-        // Clean up the pipes, but check if they are valid file descriptors first.
+        // close the pipes in the parent
         close(fd[0]);
         close(fd[1]);
         
-        // Make sure STDIN and STDOUT go back to normal in case the pipes screwed something up.
-        dup2(stdin, STDIN_FILENO);
-        dup2(stdout, STDOUT_FILENO);
-            
-        next:
-        
-		//Clear buffer/line again. Just to be sure
+        // reset stdin and stdout
+        dup2(stdin1, STDIN_FILENO);
+        dup2(stdout1, STDOUT_FILENO);
+
+		// clear our cstring just in case
 		memset(buffer, '\0', sizeof(buffer));
-		memset(line, '\0', sizeof(line));
 
 	}
 	return EXIT_SUCCESS;
