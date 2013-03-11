@@ -8,19 +8,19 @@ Requirement Checklist
 =====================
 [X] Run executables without arguments.
 [X] Run executables with arguments.
-[ ]I set command for HOME and PATH work properly.
+[X] set command for HOME and PATH work properly.
 [X] exit and quit commands work properly.
-[X]H cd (with and without arguments) works properly.
+[X] cd (with and without arguments) works properly.
 [X] PATH works properly. Give error messages when the executable is not found.
-[Not Sure]I Child processes inherit the environment.
+[90%]I Child processes inherit the environment.
 [X] Allow background/foreground execution (using &).
-[ ]I Printing/reporting of background processes, (including the jobs command).
-[X]H Allow file redirection (using > and <).
-[X]H Allow (1) pipe (using |).
+[X] Printing/reporting of background processes, (including the jobs command).
+[X] Allow file redirection (using > and <).
+[X] Allow (1) pipe (using |).
 [x] Supports reading commands from prompt and from file < syntax as well.
 [In Progress] Report.
 BONUS:
-[ ] Support multiple pipes in one command.
+[X] Support multiple pipes in one command.
 [ ] kill command delivers signals to background processes.
 
 
