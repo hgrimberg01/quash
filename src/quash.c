@@ -26,6 +26,8 @@
 #define MAX_ARGV 12
 #define MAX_ARG_LEN 128
 
+//Change Dir Function
+//Accepts a string and changes dir.
 int change_dir(char *buffer) {
 	int err_stat = 0;
 	char safe_buffer[2048];
@@ -87,6 +89,8 @@ char* accept(char* line) {
 	return line;
 }
 
+
+//Basic execute function. Ripped straigh from the old source
 void execute(char ***argv, int background, char **env) {
 	pid_t pid;
 
@@ -113,6 +117,7 @@ void execute(char ***argv, int background, char **env) {
 	return;
 }
 
+//Execute with just a redirect out.
 void execute_redirect_out(char ***argv, int background, char **env, char* path) {
 
 	pid_t pid;
@@ -143,6 +148,7 @@ void execute_redirect_out(char ***argv, int background, char **env, char* path) 
 	return;
 }
 
+//Execute with a redirect
 void execute_redirect_in(char ***argv, int background, char **env, char* path) {
 
 	pid_t pid;
@@ -173,27 +179,46 @@ void execute_redirect_in(char ***argv, int background, char **env, char* path) {
 	return;
 }
 
+//Execute two commands with a pipe
+// Arguments
+// argv1 - arguments for command 1
+// background1 - 1/0 to indicate wether to run in backround
+// env1 - enviroment for command 1
 void execute_piped(char ***argv1, int background1, char **env1, char ***argv2,
 		int background2, char **env2) {
+			
+	//Init. PID Containers		
 	pid_t pid, pid2;
+	
+	//Init. Status Containers
 	int status, status2;
+	
+	//Pipe Container
 	int plumbing[2];
 
+	//Pipe It
 	pipe(plumbing);
-
+	
+	//Fork and stop if we get an error
 	if ((pid = fork()) < 0) {
 		printf("*** ERROR: forking child process failed\n");
 		exit(1);
 	} else if (pid == 0) {
+		//We are in a fork(child process)
 		errno = 0;
+		//Close unused end of pipe
 		close(plumbing[0]);
+		
+		//replace STDDOUT with write end of pipe
 		dup2(plumbing[1], STDOUT_FILENO);
 
+		//Execute command 1
 		if (execvpe(**argv1, *argv1, env1) < 0) {
 			printf("%s\n", strerror(errno));
 			exit(1);
 		}
 	} else {
+		//First proecss cannot be in  backround
 		if (background1 == FALSE) {
 
 		}
@@ -203,6 +228,7 @@ void execute_piped(char ***argv1, int background1, char **env1, char ***argv2,
 		}
 	}
 
+	//Do same as above only set STDIN to read end of pipe.
 	if ((pid2 = fork()) < 0) {
 		printf("*** ERROR: forking child process 2 failed\n");
 		exit(1);
@@ -225,9 +251,12 @@ void execute_piped(char ***argv1, int background1, char **env1, char ***argv2,
 			printf("[1] %i\n", pid);
 		}
 	}
+	
+	//Close pipe completely
 	close(plumbing[1]);
 	close(plumbing[0]);
-
+	
+	//Wait for child2 to finish before we return the call.
 	while (waitpid(pid2, &status, 0) != pid2) {
 	};
 	return;
@@ -297,10 +326,15 @@ void execute_piped_out_redir(char ***argv1, int background1, char **env1,
 	return;
 }
 
+//What kind of commands are available. 
+//This is a relic of my shattered dream to write my own parser.
 typedef enum {
 	REG, PIPE, REDIR_IN, REDIR_OUT
 } cmd_type;
 
+
+//Command contains everything needed to run a command.
+//This is a relic of my shattered dream to write my own parser.
 typedef struct {
 	char** argv;
 	int argc;
@@ -310,7 +344,12 @@ typedef struct {
 	char target[MAX_PATH_LEN];
 } Command;
 
+
+//Given a string of a single command with arguments and an enviroment,
+//returns a pointer to a Command that has been mallocaed
 Command* build_regular_command(char* buffer, char **env) {
+	
+	//Temporary stuff
 	char safe_buffer[256];
 	char* pch;
 	char** argv = (char**) malloc(sizeof(char*) * MAX_ARGV);
@@ -322,21 +361,35 @@ Command* build_regular_command(char* buffer, char **env) {
 	Command* command;
 
 	command = (Command*) malloc(sizeof(Command));
-
+	
+	
+	//Copy buffer to safe_buffer to avoid messing with other stuff
 	strcpy(safe_buffer, buffer);
+	
+	//Tokenize on spaces
 	pch = strtok(safe_buffer, " \n");
 	while (pch != NULL ) {
+		//Malloc a new string
 		command_buffer = (char*) malloc((strlen(pch) * sizeof(char)) + 1);
+		
+		//Zero it out
 		memset(command_buffer, '\0', (strlen(pch) * sizeof(char)) + 1);
+		
+		//Copy the contents of our token into command_buffer
 		strcpy(command_buffer, pch);
+		
+		//Set the argv array to the command_buffer pointer freshly malloced
 		argv[argc] = command_buffer;
+		
+		//Set command_buffer pointer to null for next iteration
 		command_buffer = NULL;
-
+		
+		//Tokenize again
 		pch = strtok(NULL, " \n");
 		argc++;
 	}
 
-// Run detection for background operation
+	// Run detection for background operation
 	if (argc != 0) {
 		if (strcmp(argv[argc - 1], "&") == 0) {
 			background = TRUE;
@@ -345,19 +398,25 @@ Command* build_regular_command(char* buffer, char **env) {
 			background = FALSE;
 		}
 	}
+	
+	//Trims the emoty slots of the argv array to avoid causing headaches 
+	//when running commands with different amounts of arguments
+	//I lost 3 hours until I realized this.
 	argv2 = (char**) malloc(sizeof(char*) * (argc + 1));
 	int i = 0;
 	for (i = argc; i < MAX_ARGV - 1; i++) {
 
 		argv[argc] = '\0';
 	}
-
+	
+	//Set our command to its contents
 	command->argc = argc;
 	command->is_background = background;
 	command->argv = argv;
 	command->com_type = REG;
 	command->envv = env;
-
+	
+	//Return the pointer to the malloced Command
 	return command;
 }
 
@@ -410,11 +469,16 @@ int main(int argc, char **argv, char **envp) {
 	while (TRUE) {
 		printf("%s@%s$ ", pw->pw_name, hostname);
 		fflush(stdout);
-
+		
+		//Make sure our line/buffer is indeed empty
 		memset(line, '\0', sizeof(line));
-
+		
+		//Set line to stuff from terminal
+		//Also set buffer to alias line
 		buffer = accept(line);
-
+		
+		//Check for various things in the line
+		//to determine what combination of commands to run
 		pipeptr = strpbrk(buffer, "|");
 		inptr = strpbrk(buffer, "<");
 		outptr = strpbrk(buffer, ">");
@@ -424,11 +488,12 @@ int main(int argc, char **argv, char **envp) {
 				|| strncmp(buffer, "quit", 4) == 0) {
 			return EXIT_SUCCESS;
 		}
-
+		
+		//Handle CD command
 		if (strncmp(buffer, "cd", 2) == 0) {
 			change_dir(buffer);
 		} else {
-
+			//If we have an inbound redirect, nothing else can happen.
 			if (inptr != NULL ) {
 				char* pch = strtok(buffer, "<\n");
 				char first[256];
@@ -447,7 +512,11 @@ int main(int argc, char **argv, char **envp) {
 				free(basic);
 				basic = NULL;
 			} else {
+				//Otherwise, figure out what combo we have and run it.
 				if (pipeptr != NULL && outptr != NULL ) {
+					//Redirect out AND pipe
+					
+					//Tokenize once on pipe ( } )
 					char* pch = strtok(buffer, "|\n");
 					char first[256];
 					strcpy(first, pch);
@@ -456,20 +525,30 @@ int main(int argc, char **argv, char **envp) {
 					strcpy(second, pch);
 
 					char third[256];
+					
+					//Tokenzie twice on >
+					//Being sure to copy stuff to buffers
+					//to avoid tampering with the pointer
 					pch = strtok(second, ">\n");
 					strcpy(third, pch);
 					char fourth[256];
 					pch = strtok(NULL, ">\n");
 					strcpy(fourth, pch);
-
+					
+					
+					//Build our commands
 					firstC = build_regular_command(first, env);
 
 					SecondC = build_regular_command(third, env);
-
+					
+					
+					//Execute everything
 					execute_piped_out_redir(&(firstC->argv),
 							firstC->is_background, firstC->envv,
 							&(SecondC->argv), SecondC->is_background,
 							SecondC->envv, fourth);
+							
+					//Free and clear stuff
 					free(firstC);
 					free(SecondC);
 					firstC = NULL;
@@ -535,7 +614,8 @@ int main(int argc, char **argv, char **envp) {
 				}
 			}
 		}
-
+		
+		//Clear buffer/line again. Just to be sure
 		memset(buffer, '\0', sizeof(buffer));
 		memset(line, '\0', sizeof(line));
 
