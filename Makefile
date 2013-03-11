@@ -1,13 +1,10 @@
 all: quash
 
-utility.o: src/utility.cpp
-	clang++ -std=gnu++11 -c -g src/utility.cpp -o $@
-
 quash.o: src/quash.cpp
-	clang++ -std=gnu++11 -c -g src/quash.cpp -o $@
+	g++ -O2 -std=c++11 -c -g src/quash.cpp -o $@
 	
-quash: utility.o quash.o
-	clang++ -std=gnu++11 -g -o quash utility.o quash.o
+quash:  quash.o
+	g++ -O2 -std=c++11 -g -o quash  quash.o
 
 test: quash
 	./quash
